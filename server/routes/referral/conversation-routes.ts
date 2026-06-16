@@ -224,7 +224,7 @@ export function setupConversationRoutes(appkit: AppKitWithLakebase): void {
         res.json({
           lang, speechLocale, emergency,
           interpretation: `${need} near ${origin.label}`,
-          origin: { label: origin.label, precision: origin.precision },
+          origin: { label: origin.label, precision: origin.precision, lat: origin.lat, lng: origin.lng },
           summary: localized.summary,
           count: results.length, results,
         });

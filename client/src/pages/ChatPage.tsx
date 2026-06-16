@@ -2,6 +2,7 @@ import { Card, CardContent, Button, Input } from '@databricks/appkit-ui/react';
 import { useEffect, useRef, useState } from 'react';
 import { Phone, ExternalLink, MapPin, Mic, Volume2, Send, RotateCcw, Sparkles, LocateFixed, Navigation, MessageCircle } from 'lucide-react';
 import { listenOnce, speak, sttSupported, ttsSupported } from '../lib/speech';
+import { FacilityMap } from '../components/FacilityMap';
 
 // Read the device's GPS position (with the user's permission).
 function getDeviceLocation(): Promise<{ lat: number; lng: number }> {
@@ -25,6 +26,7 @@ interface Result {
   score: number;
   similarity: number;
   match_reason: string;
+  evidence_confidence?: 'listed' | 'weak';
   official_phone: string | null;
   official_website: string | null;
   city: string | null;
@@ -53,6 +55,8 @@ const whatsappUrl = (r: Result) => {
 interface Origin {
   label: string;
   precision: 'gps' | 'pin' | 'city';
+  lat?: number;
+  lng?: number;
 }
 interface ChatMessage {
   id: string;
@@ -254,6 +258,12 @@ export function ChatPage() {
 
               {m.results && m.results.length > 0 && (
                 <div className="mt-2 space-y-2">
+                  {m.origin?.lat != null && m.origin.lng != null && (
+                    <FacilityMap
+                      origin={{ lat: m.origin.lat, lng: m.origin.lng, label: m.origin.label }}
+                      results={m.results}
+                    />
+                  )}
                   {m.origin && (
                     <p className="text-xs text-muted-foreground inline-flex items-center gap-1">
                       <MapPin className="h-3 w-3" />
@@ -286,6 +296,9 @@ export function ChatPage() {
                         <p className="text-xs">
                           <span className="font-medium text-foreground">Why: </span>
                           <span className="text-muted-foreground">{r.match_reason}</span>
+                          {r.evidence_confidence === 'weak' && (
+                            <span className="ml-1 rounded bg-amber-500/15 text-amber-700 px-1 py-0.5">unverified</span>
+                          )}
                         </p>
                         <div className="flex flex-wrap gap-3 text-xs">
                           <a href={directionsUrl(r)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary underline underline-offset-4">

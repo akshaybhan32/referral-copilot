@@ -151,9 +151,26 @@ export const SPEECH_LOCALE: Record<string, string> = {
   gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', en: 'en-IN',
 };
 
+// Evidence implausible for the facility's apparent type (a dental/eye/diagnostic
+// clinic can't be doing transplants) — scraped-aggregator noise. Never cited.
+// `f` = referral.facility, `txt` = the candidate evidence term.
+const SUSPECT_EVIDENCE = `NOT (
+  (f.name ILIKE '%dental%' OR f.name ILIKE '%eye%' OR f.name ILIKE '%ophthal%'
+   OR f.name ILIKE '%diagnostic%' OR f.name ILIKE '%pathology%' OR f.name ILIKE '%physiother%')
+  AND (txt ILIKE '%bypass%' OR txt ILIKE '%transplant%' OR txt ILIKE '%open heart%'
+   OR txt ILIKE '%neurosurg%' OR txt ILIKE '%cardiac surg%' OR txt ILIKE '%cancer surg%'))`;
+
+const SYS_GROUND = `You check which of a facility's listed medical services genuinely support a patient's stated need.
+For each facility id, return ONLY the listed services (verbatim from the input) that clearly support the need.
+Be strict: if none clearly support it, return an empty array — do not include loosely-related services.
+Output ONLY compact JSON: {"<facility_id>": ["service", ...], ...}. No prose, no markdown.`;
+
 // One semantic search: geo radius + cosine similarity (search_facilities_vec),
-// then attach query-RELEVANT evidence (procedures/capabilities/specialties most
-// similar to the care need via pg_trgm) so each card cites why it matched.
+// then attach evidence for WHY each matched:
+//   1. lexical (pg_trgm) evidence, excluding type-implausible (suspect) claims;
+//   2. for facilities with no lexical match, an LLM grounds the citation against
+//      the facility's listed services — or honestly says "no specific listing".
+// Each result carries evidence_confidence: 'listed' (grounded) | 'weak' (no listing).
 export async function semanticSearch(
   appkit: AppKitWithLakebase,
   p: SearchParams,
@@ -171,21 +188,75 @@ export async function semanticSearch(
   if (rows.length === 0) return rows;
 
   const ids = rows.map((r) => r.facility_id as string);
+
+  // 1) Lexical (trigram) evidence — implausible claims excluded at the source.
   const ev = await appkit.lakebase.query(
     `SELECT facility_id, string_agg(txt, ' • ' ORDER BY s DESC) AS reason FROM (
-       SELECT facility_id, txt, s,
-              row_number() OVER (PARTITION BY facility_id ORDER BY s DESC) rn FROM (
-         SELECT facility_id, procedure  AS txt, similarity(procedure,  $1) s FROM referral.facility_procedure  WHERE facility_id = ANY($2)
-         UNION ALL
-         SELECT facility_id, capability AS txt, similarity(capability, $1) s FROM referral.facility_capability WHERE facility_id = ANY($2)
-         UNION ALL
-         SELECT facility_id, specialty  AS txt, similarity(specialty,  $1) s FROM referral.facility_specialty  WHERE facility_id = ANY($2)
-       ) u WHERE s > 0.12
+       SELECT facility_id, txt, s, row_number() OVER (PARTITION BY facility_id ORDER BY s DESC) rn FROM (
+         SELECT u.facility_id, u.txt, u.s FROM (
+           SELECT facility_id, procedure  AS txt, similarity(procedure,  $1) s FROM referral.facility_procedure  WHERE facility_id = ANY($2)
+           UNION ALL
+           SELECT facility_id, capability AS txt, similarity(capability, $1) s FROM referral.facility_capability WHERE facility_id = ANY($2)
+           UNION ALL
+           SELECT facility_id, specialty  AS txt, similarity(specialty,  $1) s FROM referral.facility_specialty  WHERE facility_id = ANY($2)
+         ) u JOIN referral.facility f ON f.facility_id = u.facility_id
+         WHERE u.s > 0.12 AND ${SUSPECT_EVIDENCE}
+       ) q
      ) r WHERE rn <= 3 GROUP BY facility_id`,
     [p.need, ids],
   );
   const reasonOf = new Map(ev.rows.map((r) => [r.facility_id as string, r.reason as string]));
-  return rows.map((r) => ({ ...r, match_reason: reasonOf.get(r.facility_id as string) ?? r.match_reason }));
+
+  // 2) Facilities with no lexical evidence → ground (or honestly disclaim) via LLM.
+  const weakIds = ids.filter((id) => !reasonOf.has(id));
+  const grounded = new Map<string, { reason: string; weak: boolean }>();
+  if (weakIds.length > 0) {
+    const cand = await appkit.lakebase.query(
+      `SELECT facility_id, txt FROM (
+         SELECT u.facility_id, u.txt, row_number() OVER (PARTITION BY u.facility_id ORDER BY length(u.txt)) rn FROM (
+           SELECT DISTINCT facility_id, procedure  AS txt FROM referral.facility_procedure  WHERE facility_id = ANY($1)
+           UNION SELECT DISTINCT facility_id, capability AS txt FROM referral.facility_capability WHERE facility_id = ANY($1)
+           UNION SELECT DISTINCT facility_id, specialty  AS txt FROM referral.facility_specialty  WHERE facility_id = ANY($1)
+         ) u JOIN referral.facility f ON f.facility_id = u.facility_id
+         WHERE ${SUSPECT_EVIDENCE}
+       ) r WHERE rn <= 12`,
+      [weakIds],
+    );
+    const termsBy = new Map<string, string[]>();
+    for (const c of cand.rows) {
+      const id = c.facility_id as string;
+      const list = termsBy.get(id) ?? [];
+      list.push(String(c.txt));
+      termsBy.set(id, list);
+    }
+    const noListing = `No specific “${p.need}” service is listed — matched on the facility's overall profile`;
+    try {
+      const content = await chat(
+        appkit,
+        [
+          { role: 'system', content: SYS_GROUND },
+          { role: 'user', content: `need="${p.need}"\n${JSON.stringify(Object.fromEntries(termsBy))}` },
+        ],
+        120 + weakIds.length * 60,
+      );
+      const j = extractJson<Record<string, unknown>>(content);
+      for (const id of weakIds) {
+        const sup = Array.isArray(j[id]) ? (j[id] as unknown[]).map((x) => String(x)).filter(Boolean) : [];
+        grounded.set(id, sup.length ? { reason: sup.slice(0, 3).join(' • '), weak: false } : { reason: noListing, weak: true });
+      }
+    } catch {
+      for (const id of weakIds) grounded.set(id, { reason: noListing, weak: true });
+    }
+  }
+
+  return rows.map((r) => {
+    const id = r.facility_id as string;
+    const lex = reasonOf.get(id);
+    const g = grounded.get(id);
+    const reason = lex ?? g?.reason ?? (typeof r.match_reason === 'string' ? r.match_reason : '');
+    const confidence = lex || (g && !g.weak) ? 'listed' : 'weak';
+    return { ...r, match_reason: reason, evidence_confidence: confidence };
+  });
 }
 
 const INDIA = (lat: number, lng: number) => lat >= 6 && lat <= 37.6 && lng >= 68 && lng <= 97.6;
