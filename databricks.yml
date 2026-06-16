@@ -30,6 +30,10 @@ resources:
           serving_endpoint:
             name: databricks-gte-large-en
             permission: CAN_QUERY
+        - name: llm
+          serving_endpoint:
+            name: databricks-meta-llama-3-3-70b-instruct
+            permission: CAN_QUERY
 
 targets:
   default:

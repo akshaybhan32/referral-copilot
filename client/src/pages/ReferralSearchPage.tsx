@@ -8,7 +8,10 @@ import {
   Skeleton,
 } from '@databricks/appkit-ui/react';
 import { useState } from 'react';
-import { Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Plus, Check, Sparkles } from 'lucide-react';
+import {
+  Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Plus, Check, Sparkles, Mic, Volume2,
+} from 'lucide-react';
+import { listenOnce, speak, sttSupported, ttsSupported } from '../lib/speech';
 
 interface Result {
   facility_id: string;
@@ -18,6 +21,7 @@ interface Result {
   distance_km: number;
   score: number;
   match_reason: string;
+  match_reason_en?: string;
   beds: number | null;
   num_doctors: number | null;
   official_phone: string | null;
@@ -26,20 +30,41 @@ interface Result {
   state: string | null;
 }
 
+interface Parsed {
+  need: string;
+  place: string;
+  lang: string;
+  interpretation: string;
+  summary: string;
+  speechLocale: string;
+}
+
 const siteUrl = (s: string) => (s.startsWith('http') ? s : `https://${s}`);
 
 const EXAMPLES = [
   'dialysis near Patna',
+  'पटना के पास डायलिसिस',
   'open heart surgery near New Delhi',
-  'newborn intensive care near Mumbai',
-  'cataract surgery near Jaipur',
+  'जयपुर में मोतियाबिंद का ऑपरेशन',
+];
+
+// Languages offered for the mic (BCP-47 for the Web Speech API).
+const VOICE_LANGS: { code: string; label: string }[] = [
+  { code: 'en-IN', label: 'English' },
+  { code: 'hi-IN', label: 'हिंदी' },
+  { code: 'bn-IN', label: 'বাংলা' },
+  { code: 'ta-IN', label: 'தமிழ்' },
+  { code: 'te-IN', label: 'తెలుగు' },
+  { code: 'mr-IN', label: 'मराठी' },
 ];
 
 export function ReferralSearchPage() {
   const [query, setQuery] = useState('dialysis near Patna');
   const [radius, setRadius] = useState(50);
+  const [voiceLang, setVoiceLang] = useState('hi-IN');
+  const [listening, setListening] = useState(false);
   const [results, setResults] = useState<Result[] | null>(null);
-  const [parsed, setParsed] = useState<{ need: string; place: string } | null>(null);
+  const [parsed, setParsed] = useState<Parsed | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<Record<string, boolean>>({});
@@ -51,14 +76,16 @@ export function ReferralSearchPage() {
     try {
       const qs = new URLSearchParams({ q: q.trim(), radius: String(radius) });
       const res = await fetch(`/api/referral/ask?${qs}`);
-      const data = (await res.json()) as {
-        need?: string;
-        place?: string;
-        results?: Result[];
-        error?: string;
-      };
+      const data = (await res.json()) as Partial<Parsed> & { results?: Result[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? `Search failed: ${res.statusText}`);
-      setParsed({ need: data.need ?? '', place: data.place ?? '' });
+      setParsed({
+        need: data.need ?? '',
+        place: data.place ?? '',
+        lang: data.lang ?? 'en',
+        interpretation: data.interpretation ?? '',
+        summary: data.summary ?? '',
+        speechLocale: data.speechLocale ?? 'en-IN',
+      });
       setResults(data.results ?? []);
     } catch (err) {
       setResults(null);
@@ -71,6 +98,20 @@ export function ReferralSearchPage() {
   const runSearch = (e: React.FormEvent) => {
     e.preventDefault();
     void search(query);
+  };
+
+  const startListening = async () => {
+    setError(null);
+    setListening(true);
+    try {
+      const transcript = await listenOnce(voiceLang);
+      setQuery(transcript);
+      await search(transcript);
+    } catch (err) {
+      setError(err instanceof Error ? `Mic error: ${err.message}` : 'Mic error');
+    } finally {
+      setListening(false);
+    }
   };
 
   const addToShortlist = async (r: Result, rank: number) => {
@@ -108,7 +149,7 @@ export function ReferralSearchPage() {
       <div className="space-y-1">
         <h2 className="text-2xl font-bold text-foreground">Where should this patient go?</h2>
         <p className="text-muted-foreground text-sm">
-          Enter a care need and a location — get an evidence-attached shortlist of candidate facilities.
+          Ask in any language — type or speak. We find facilities and answer back in your language.
         </p>
       </div>
 
@@ -117,27 +158,43 @@ export function ReferralSearchPage() {
           <form onSubmit={runSearch} className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-3 items-end">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Ask in plain language</label>
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="dialysis near Patna"
-              />
+              <div className="relative">
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="dialysis near Patna · पटना के पास डायलिसिस"
+                  className="pr-10"
+                />
+                {sttSupported() && (
+                  <button
+                    type="button"
+                    title="Speak"
+                    onClick={() => void startListening()}
+                    disabled={listening}
+                    className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md p-1.5 ${
+                      listening ? 'text-destructive animate-pulse' : 'text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <Mic className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Radius</label>
+              <label className="text-xs font-medium text-muted-foreground">Voice</label>
               <select
-                value={radius}
-                onChange={(e) => setRadius(Number(e.target.value))}
+                value={voiceLang}
+                onChange={(e) => setVoiceLang(e.target.value)}
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm"
               >
-                {[25, 50, 100, 200].map((r) => (
-                  <option key={r} value={r}>{r} km</option>
+                {VOICE_LANGS.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
                 ))}
               </select>
             </div>
             <Button type="submit" disabled={loading}>{loading ? 'Searching…' : 'Find facilities'}</Button>
           </form>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {EXAMPLES.map((ex) => (
               <button
                 key={ex}
@@ -148,16 +205,44 @@ export function ReferralSearchPage() {
                 {ex}
               </button>
             ))}
+            <span className="text-xs text-muted-foreground ml-auto">Radius
+              <select
+                value={radius}
+                onChange={(e) => setRadius(Number(e.target.value))}
+                className="ml-1 rounded-md border border-input bg-background px-2 py-0.5 text-xs"
+              >
+                {[25, 50, 100, 200].map((r) => (
+                  <option key={r} value={r}>{r} km</option>
+                ))}
+              </select>
+            </span>
           </div>
         </CardContent>
       </Card>
 
       {parsed && !error && (
-        <p className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
-          <Sparkles className="h-3.5 w-3.5 text-primary" />
-          semantic match for <span className="font-medium text-foreground">“{parsed.need}”</span> near{' '}
-          <span className="font-medium text-foreground">{parsed.place}</span>
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-primary" />
+            understood as <span className="font-medium text-foreground">“{parsed.interpretation}”</span>
+            {parsed.lang !== 'en' && <span className="rounded-full bg-primary/10 text-primary px-1.5 py-0.5">{parsed.lang}</span>}
+          </p>
+          {parsed.summary && (
+            <p className="text-sm text-foreground inline-flex items-center gap-2">
+              {parsed.summary}
+              {ttsSupported() && (
+                <button
+                  type="button"
+                  title="Read aloud"
+                  onClick={() => speak(parsed.summary, parsed.speechLocale)}
+                  className="text-muted-foreground hover:text-primary"
+                >
+                  <Volume2 className="h-4 w-4" />
+                </button>
+              )}
+            </p>
+          )}
+        </div>
       )}
 
       {error && <div className="text-destructive bg-destructive/10 p-3 rounded-md">{error}</div>}

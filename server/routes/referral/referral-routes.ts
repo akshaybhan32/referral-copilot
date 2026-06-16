@@ -2,14 +2,15 @@ import { z } from 'zod';
 import { Application, Request } from 'express';
 import { setupReferralSchema } from './schema';
 
-interface ServingHandle {
-  invoke(body: Record<string, unknown>): Promise<
-    { ok: true; data: unknown } | { ok: false; status: number; message: string }
-  >;
-}
-interface AppKitWithLakebase {
+// AppKit's serving invoke() is typed as returning the unwrapped response, but at
+// runtime it returns an ExecutionResult ({ ok, data }). We type serving loosely
+// (Promise<unknown>, method syntax) so the real appkit is structurally assignable
+// without a cast, and narrow each result to ExecResult at the call site.
+type ExecResult = { ok: true; data: unknown } | { ok: false; status: number; message: string };
+
+export interface AppKitWithLakebase {
   lakebase: { query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
-  serving: (alias?: string) => ServingHandle;
+  serving(alias: string): { invoke(body: Record<string, unknown>): Promise<unknown> };
   server: { extend(fn: (app: Application) => void): void };
 }
 
@@ -37,13 +38,93 @@ interface SearchParams {
 
 // Embed query text with databricks-gte-large-en -> a pgvector literal '[..]'.
 async function embedQuery(appkit: AppKitWithLakebase, text: string): Promise<string> {
-  const r = await appkit.serving().invoke({ input: text });
+  const r = (await appkit.serving('embed').invoke({ input: text })) as ExecResult;
   if (!r.ok) throw new Error(`embed failed: ${r.message}`);
   const data = r.data as { data?: Array<{ embedding?: number[] }> };
   const emb = data.data?.[0]?.embedding;
   if (!emb || emb.length === 0) throw new Error('embed returned no vector');
   return `[${emb.join(',')}]`;
 }
+
+type ChatMsg = { role: 'system' | 'user'; content: string };
+
+// One chat-LLM call -> trimmed text content.
+async function chat(appkit: AppKitWithLakebase, messages: ChatMsg[], maxTokens = 200): Promise<string> {
+  const r = (await appkit.serving('llm').invoke({ messages, temperature: 0, max_tokens: maxTokens })) as ExecResult;
+  if (!r.ok) throw new Error(`llm failed: ${r.message}`);
+  const data = r.data as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content?.trim() ?? '';
+}
+
+// Pull the first {...} object out of an LLM response (tolerates ```json fences / prose).
+function extractJson<T>(s: string): T {
+  const m = s.match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('no JSON in LLM output');
+  return JSON.parse(m[0]) as T;
+}
+
+const SYS_PARSE = `You convert a patient's health-facility search query (in ANY language) into JSON.
+Output ONLY compact JSON: {"need":"<care need in English>","place":"<city/place name in English>","lang":"<ISO 639-1 code of the input language>"}.
+Translate and transliterate place names to their common English spelling. If no place is mentioned, use "" for place. No prose, no markdown.`;
+
+// Translate-in + intent extraction. English "<need> near <place>" skips the LLM.
+async function parseIntent(
+  appkit: AppKitWithLakebase,
+  q: string,
+): Promise<{ need: string; place: string; lang: string }> {
+  const ascii = [...q].every((c) => c.charCodeAt(0) < 128);
+  const m = q.match(/^\s*(.+?)\s+near\s+(.+?)\s*$/i);
+  if (ascii && m) return { need: m[1].trim(), place: m[2].trim(), lang: 'en' };
+  const content = await chat(appkit, [
+    { role: 'system', content: SYS_PARSE },
+    { role: 'user', content: q },
+  ], 120);
+  const j = extractJson<{ need?: string; place?: string; lang?: string }>(content);
+  return {
+    need: String(j.need ?? '').trim(),
+    place: String(j.place ?? '').trim(),
+    lang: (String(j.lang ?? 'en').trim() || 'en').toLowerCase().slice(0, 2),
+  };
+}
+
+const SYS_LOCALIZE = `Translate the string values of the given JSON into the language given as "target=<ISO code>".
+Keep proper nouns (hospital names, place names) and all numbers unchanged. Output ONLY the same JSON shape, nothing else.`;
+
+// Localize-out: translate the summary + per-card evidence in one call. Best-effort
+// (falls back to English on any failure). Facility names/phones/URLs are never sent here.
+async function localize(
+  appkit: AppKitWithLakebase,
+  summary: string,
+  reasons: string[],
+  lang: string,
+): Promise<{ summary: string; reasons: string[] }> {
+  if (lang === 'en' || (!summary && reasons.length === 0)) return { summary, reasons };
+  try {
+    const content = await chat(
+      appkit,
+      [
+        { role: 'system', content: SYS_LOCALIZE },
+        { role: 'user', content: `target=${lang}  ${JSON.stringify({ summary, reasons })}` },
+      ],
+      300 + reasons.length * 80, // Devanagari is token-heavy; budget per reason so JSON isn't truncated
+    );
+    const j = extractJson<{ summary?: string; reasons?: unknown[] }>(content);
+    const tr = Array.isArray(j.reasons) ? j.reasons : [];
+    // Index-wise with per-item fallback (don't lose everything if one is missing/truncated).
+    return {
+      summary: typeof j.summary === 'string' && j.summary ? j.summary : summary,
+      reasons: reasons.map((en, i) => (typeof tr[i] === 'string' && tr[i] ? String(tr[i]) : en)),
+    };
+  } catch {
+    return { summary, reasons };
+  }
+}
+
+// ISO 639-1 -> BCP-47 hint the client can hand to speech synthesis.
+const SPEECH_LOCALE: Record<string, string> = {
+  hi: 'hi-IN', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN',
+  gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', en: 'en-IN',
+};
 
 // One semantic search: geo radius + cosine similarity (search_facilities_vec),
 // then attach query-RELEVANT evidence (procedures/capabilities/specialties most
@@ -144,20 +225,37 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
         return;
       }
       const { q, radius, type, operator, limit } = parsed.data;
-      const m = q.match(/^\s*(.+?)\s+near\s+(.+?)\s*$/i);
-      if (!m) {
-        res.status(400).json({ error: "Try '<care need> near <place>', e.g. 'dialysis near Patna'." });
-        return;
-      }
-      const need = m[1].trim();
-      const place = m[2].trim();
       try {
+        // 1. Translate-in + intent extraction (any language -> English need/place).
+        const { need, place, lang } = await parseIntent(appkit, q);
+        const speechLocale = SPEECH_LOCALE[lang] ?? `${lang}-IN`;
+        if (!need || !place) {
+          res.status(400).json({
+            error: "Tell me a care need and a place, e.g. 'dialysis near Patna' / 'पटना के पास डायलिसिस'.",
+            need, place, lang,
+          });
+          return;
+        }
+        // 2. Geocode (English place) + semantic search (existing English pipeline).
         const loc = await geocode(appkit, place);
         if (!loc) {
-          res.status(404).json({ error: `Couldn't find "${place}". Try a nearby city.`, need, place });
+          res.status(404).json({ error: `Couldn't find "${place}". Try a nearby city.`, need, place, lang });
           return;
         }
         const rows = await semanticSearch(appkit, { need, lat: loc.lat, lng: loc.lng, radius, type, operator, limit });
+
+        // 3. Localize-out: translate the summary + per-card evidence into the input language.
+        const summaryEn = rows.length
+          ? `${rows.length} ${rows.length === 1 ? 'facility' : 'facilities'} found for ${need} near ${place}.`
+          : `No facilities found for ${need} near ${place}.`;
+        const reasonsEn = rows.map((r) => (typeof r.match_reason === 'string' ? r.match_reason : ''));
+        const localized = await localize(appkit, summaryEn, reasonsEn, lang);
+        const results = rows.map((r, i) => ({
+          ...r,
+          match_reason: localized.reasons[i] ?? r.match_reason,
+          match_reason_en: r.match_reason,
+        }));
+
         appkit.lakebase
           .query(
             `INSERT INTO referral.search_session
@@ -166,7 +264,14 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
             [userOf(req), q, need, place, loc.lat, loc.lng, radius, rows.length],
           )
           .catch(() => undefined);
-        res.json({ need, place, lat: loc.lat, lng: loc.lng, count: rows.length, results: rows });
+
+        res.json({
+          need, place, lang, speechLocale,
+          interpretation: `${need} near ${place}`,
+          summary: localized.summary,
+          lat: loc.lat, lng: loc.lng,
+          count: results.length, results,
+        });
       } catch (err) {
         console.error('[referral] ask failed:', err);
         res.status(500).json({ error: 'search failed' });

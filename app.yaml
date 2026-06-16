@@ -2,5 +2,11 @@ command: ['npm', 'run', 'start']
 env:
   - name: LAKEBASE_ENDPOINT
     valueFrom: postgres
+  # Embeddings (default endpoint satisfies the serving plugin's required-resource check too).
   - name: DATABRICKS_SERVING_ENDPOINT_NAME
     valueFrom: embed
+  - name: EMBED_ENDPOINT
+    valueFrom: embed
+  # Chat LLM for translate-in / localize-out (multilingual).
+  - name: LLM_ENDPOINT
+    valueFrom: llm

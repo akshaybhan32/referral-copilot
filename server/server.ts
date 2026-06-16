@@ -4,10 +4,12 @@ import { setupReferralRoutes } from './routes/referral/referral-routes';
 createApp({
   plugins: [
     lakebase(),
-    // Default endpoint -> databricks-gte-large-en (1024-d query embeddings).
-    // Name is injected via DATABRICKS_SERVING_ENDPOINT_NAME (app.yaml valueFrom
-    // the `embed` serving_endpoint resource).
-    serving(),
+    // `embed` -> databricks-gte-large-en (1024-d query embeddings).
+    // `llm`   -> a chat model for translate-in / localize-out (multilingual).
+    // Endpoint names are injected via EMBED_ENDPOINT / LLM_ENDPOINT (app.yaml
+    // valueFrom the serving_endpoint resources). DATABRICKS_SERVING_ENDPOINT_NAME
+    // is also set to satisfy the serving plugin's required default-endpoint check.
+    serving({ endpoints: { embed: { env: 'EMBED_ENDPOINT' }, llm: { env: 'LLM_ENDPOINT' } } }),
     server(),
   ],
   async onPluginsReady(appkit) {
