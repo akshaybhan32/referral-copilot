@@ -170,11 +170,11 @@ The chat is the primary surface. A conversation lives in Lakebase (`referral.con
 
 The resulting `geo_valid` flag is what the search filters on — bad-coordinate facilities never appear, and they're excluded from origin geocoding too.
 
-## Registry verification (scaffold)
+## Registry verification
 
-`etl/verify_facilities.py` entity-resolves facilities against official registries (**PMJAY / HFR / NABH**) — fuzzy-matching on name + PIN/city — and writes matches to `referral.facility_verification`. When a result is matched, the UI shows a green **Verified** badge with the source (e.g. `PMJAY`).
+`etl/verify_facilities.py` entity-resolves facilities against official registries (**PMJAY / HFR / NABH**) — fuzzy-matching on name + PIN/city — and writes matches to `referral.facility_verification`. When a result is matched, the UI shows a green **Verified** badge with the source (e.g. `PMJAY`). The thresholds (`PIN_THRESHOLD`, `CITY_THRESHOLD`) are tuned to avoid false positives.
 
-This is wired end-to-end but currently runs on a **small seed set** (`data/registry/sample.csv`): only **6 of ~10k facilities** are verified today (AIIMS Patna, IGIMS, PMCH, Paras HMRI, Paras Darbhanga, Sankara Eye Jaipur). The badge therefore appears only for those — try **"dialysis in Patna"** to see it. Scaling to broad coverage is a matter of loading a bulk registry export and re-running the pipeline; the entity-resolution thresholds (`PIN_THRESHOLD`, `CITY_THRESHOLD`) are tuned to avoid false positives.
+**Real source data, ingested from the official Govt. of Haryana AB-PMJAY portal.** `etl/ingest_pmjay_haryana.py` pulls the district-wise empanelled-hospital PDFs from <https://ayushmanbharat.haryana.gov.in/pm-jay/> (all 22 districts, **1,329 hospitals**) and writes them to `data/registry/pmjay_haryana.csv`. Running the verification pipeline against this plus the Patna/Jaipur seed (`data/registry/sample.csv`) currently verifies **89 facilities** (87 PMJAY + 2 NABH) — try **"hospital in Karnal"**, **"surgery in Faridabad"**, or **"dialysis in Patna"** to see the badge. Coverage grows by ingesting more states the same way (each state publishes the same district-PDF format).
 
 ## Guardrails (healthcare)
 

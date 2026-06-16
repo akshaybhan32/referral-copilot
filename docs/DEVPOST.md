@@ -24,7 +24,7 @@ So we built **Jevan Rekha — Lifeline** (_jeevan rekha_ = "lifeline"): a multil
 - **📍 Precise "near me"** — device **GPS → 6-digit PIN → city**, with distances from _your_ spot, not a city centroid.
 - **✅ Evidence on every card** — each result cites _why_ it matched (the specific procedure/capability), so a recommendation is never a black box.
 - **🛡️ Healthcare guardrails** — emergency escalation (**112 / 108**), a relevance floor, a medical disclaimer, and graceful degradation.
-- **🏥 Registry verification (scaffold)** — an entity-resolution pipeline matches facilities to **PMJAY / HFR / NABH** registries and shows a **Verified** badge. It runs today on real seed facilities (AIIMS Patna, IGIMS, PMCH, Paras HMRI, Sankara Eye Jaipur), and is built to scale once bulk registry data is ingested.
+- **🏥 Registry verification** — an entity-resolution pipeline matches facilities to **PMJAY / HFR / NABH** registries and shows a **Verified** badge. It ingests real official data — all 22 districts of the Govt. of Haryana AB-PMJAY portal (**1,329 hospitals**) plus a Patna/Jaipur seed — verifying **89 facilities** today, and scales state-by-state from there.
 - **🔒 Privacy by design** — pseudonymized identity, 90-day retention, consent notice.
 - **💰 Live cost dashboard** — measured from real Model Serving token usage.
 
