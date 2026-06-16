@@ -1,4 +1,4 @@
-# Referral Copilot
+# Jevan Rekha — Lifeline
 
 **Ask in your own language — type or speak _"पटना के पास डायलिसिस"_ — and get an evidence-attached shortlist of candidate health facilities, answered back in the same language.**
 
@@ -35,6 +35,10 @@ Lexical search misses the way care needs are actually phrased. Someone searching
 ```
 
 ## Architecture
+
+![Jevan Rekha — runtime dataflow and safety checks](docs/dataflow.svg)
+
+The runtime is a single vertical pipeline — **translate-in → resolve origin → embed → search → rank/verify → localize-out** — with safety and data-quality **checks** (red) gating each stage, fed by an offline Databricks ETL that builds the `referral.*` tables and `facility_vec`.
 
 ```
  Browser                Databricks App (AppKit / Node + React)            Databricks platform

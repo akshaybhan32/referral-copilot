@@ -1,0 +1,126 @@
+<svg viewBox="0 0 1040 1000" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#9ca3af"/>
+    </marker>
+    <marker id="ar" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#dc2626"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="1040" height="1000" rx="16" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="520" y="42" text-anchor="middle" font-size="22" font-weight="700" fill="#111827">Jevan Rekha — Lifeline · Runtime Dataflow &amp; Safety Checks</text>
+  <text x="520" y="66" text-anchor="middle" font-size="13" fill="#6b7280">Ask in any Indian language → English semantic retrieval → answer back in your language</text>
+
+  <!-- legend -->
+  <rect x="724" y="80" width="16" height="12" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="746" y="90" font-size="11.5" fill="#9ca3af">red = safety / data-quality check</text>
+
+  <!-- ===================== MAIN PIPELINE (vertical spine) ===================== -->
+  <!-- step 1 -->
+  <rect x="70" y="104" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="104" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="134" font-size="16" font-weight="600" fill="#111827">1 · Patient asks — any language</text>
+  <text x="92" y="156" font-size="12" fill="#6b7280">Browser · type or 🎤 Web Speech API (voice)</text>
+
+  <!-- step 2 -->
+  <rect x="70" y="202" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="202" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="232" font-size="16" font-weight="600" fill="#111827">2 · Translate-in + extract intent</text>
+  <text x="92" y="254" font-size="12" fill="#6b7280">Model Serving · Llama 3.3 70B → {need, place, lang}</text>
+
+  <!-- step 3 -->
+  <rect x="70" y="300" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="300" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="330" font-size="16" font-weight="600" fill="#111827">3 · Resolve origin</text>
+  <text x="92" y="352" font-size="12" fill="#6b7280">device GPS → 6-digit PIN → city (median of valid sites)</text>
+
+  <!-- step 4 -->
+  <rect x="70" y="398" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="398" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="428" font-size="16" font-weight="600" fill="#111827">4 · Embed the need</text>
+  <text x="92" y="450" font-size="12" fill="#6b7280">Model Serving · gte-large-en (1024-d vector)</text>
+
+  <!-- step 5 -->
+  <rect x="70" y="496" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="496" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="526" font-size="16" font-weight="600" fill="#111827">5 · Semantic + geo search</text>
+  <text x="92" y="548" font-size="12" fill="#6b7280">Lakebase · pgvector cosine + Haversine radius</text>
+
+  <!-- step 6 -->
+  <rect x="70" y="594" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="594" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="624" font-size="16" font-weight="600" fill="#111827">6 · Rank, attach evidence, verify</text>
+  <text x="92" y="646" font-size="12" fill="#6b7280">score blend · pg_trgm query-relevant evidence</text>
+
+  <!-- step 7 -->
+  <rect x="70" y="692" width="360" height="72" rx="12" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5"/>
+  <rect x="70" y="692" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="722" font-size="16" font-weight="600" fill="#111827">7 · Localize-out</text>
+  <text x="92" y="744" font-size="12" fill="#6b7280">Llama 3.3 70B → user's language (names stay literal)</text>
+
+  <!-- step 8 -->
+  <rect x="70" y="790" width="360" height="72" rx="12" fill="#fff7f7" stroke="#fca5a5" stroke-width="1.5"/>
+  <rect x="70" y="790" width="6" height="72" rx="3" fill="#dc2626"/>
+  <text x="92" y="820" font-size="16" font-weight="600" fill="#111827">8 · Results in the same language</text>
+  <text x="92" y="842" font-size="12" fill="#6b7280">ranked cards · map · directions · WhatsApp share</text>
+
+  <!-- spine arrows -->
+  <line x1="250" y1="176" x2="250" y2="200" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="274" x2="250" y2="298" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="372" x2="250" y2="396" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="470" x2="250" y2="494" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="568" x2="250" y2="592" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="666" x2="250" y2="690" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="250" y1="764" x2="250" y2="788" stroke="#9ca3af" stroke-width="2" marker-end="url(#ag)"/>
+
+  <!-- ===================== CHECKS (right column) ===================== -->
+  <!-- emergency -->
+  <rect x="560" y="176" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="202" font-size="14" font-weight="600" fill="#b91c1c">🚨 Emergency escalation</text>
+  <text x="578" y="222" font-size="11.5" fill="#7f1d1d">chest pain / stroke / accident → 112 · 108 surfaced first</text>
+
+  <!-- coordinate validation -->
+  <rect x="560" y="304" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="330" font-size="14" font-weight="600" fill="#b91c1c">📍 Coordinate validation (bronze → silver)</text>
+  <text x="578" y="350" font-size="11.5" fill="#7f1d1d">geo_valid filter — ~8% wrong-coordinate sites never shown</text>
+
+  <!-- relevance floor -->
+  <rect x="560" y="500" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="526" font-size="14" font-weight="600" fill="#b91c1c">📉 Relevance floor</text>
+  <text x="578" y="546" font-size="11.5" fill="#7f1d1d">drop sim &lt; 0.40 · label sim &lt; 0.55 as “related”</text>
+
+  <!-- evidence grounding -->
+  <rect x="560" y="566" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="592" font-size="14" font-weight="600" fill="#b91c1c">🔍 Evidence grounding</text>
+  <text x="578" y="612" font-size="11.5" fill="#7f1d1d">suspect-evidence filter + LLM-grounded weak matches</text>
+
+  <!-- registry verification -->
+  <rect x="560" y="632" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="658" font-size="14" font-weight="600" fill="#b91c1c">🏥 Registry verification</text>
+  <text x="578" y="678" font-size="11.5" fill="#7f1d1d">PMJAY / HFR / NABH cross-check → Verified badge</text>
+
+  <!-- privacy -->
+  <rect x="560" y="730" width="420" height="60" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="578" y="756" font-size="14" font-weight="600" fill="#b91c1c">🔒 Privacy by design</text>
+  <text x="578" y="776" font-size="11.5" fill="#7f1d1d">pseudonymized identity · 90-day retention · consent notice</text>
+
+  <!-- check connectors (dashed red) -->
+  <line x1="430" y1="238" x2="556" y2="206" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <line x1="430" y1="336" x2="556" y2="334" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <line x1="430" y1="532" x2="556" y2="530" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <line x1="430" y1="616" x2="556" y2="596" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <line x1="430" y1="640" x2="556" y2="662" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+  <line x1="430" y1="822" x2="556" y2="760" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+
+  <!-- ===================== OFFLINE ETL strip ===================== -->
+  <rect x="70" y="900" width="910" height="72" rx="12" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="92" y="928" font-size="14" font-weight="600" fill="#334155">⚙️ Offline · Databricks ETL  (Unity Catalog bronze → Lakebase)</text>
+  <text x="92" y="950" font-size="12" fill="#64748b">load_from_uc  →  embed_facilities  →  validate_coordinates   ·   builds referral.* + facility_vec (~10k facilities)</text>
+
+  <!-- ETL feeds the search (left-margin dashed) -->
+  <path d="M44,900 L44,532 L62,532" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+</svg>
