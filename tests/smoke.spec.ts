@@ -4,13 +4,13 @@ import { join } from 'node:path';
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-test('smoke test - search page loads', async ({ page }) => {
+test('smoke test - chat page loads', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: 'Referral Copilot' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Where should this patient go?' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Find facilities' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Referral assistant' })).toBeVisible();
 
+  await expect(page.getByRole('link', { name: 'Chat' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Search' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'My referrals' })).toBeVisible();
 });

@@ -11,3 +11,7 @@ playwright-report/
 
 # Auto-generated types (endpoint-specific, varies per developer)
 shared/appkit-types/serving.d.ts
+
+# Python
+__pycache__/
+*.pyc

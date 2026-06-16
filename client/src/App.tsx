@@ -9,8 +9,10 @@ import {
   useIsMobile,
 } from '@databricks/appkit-ui/react';
 import { Menu } from 'lucide-react';
+import { ChatPage } from './pages/ChatPage';
 import { ReferralSearchPage } from './pages/ReferralSearchPage';
 import { ShortlistPage } from './pages/ShortlistPage';
+import { CostPage } from './pages/CostPage';
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
@@ -32,10 +34,16 @@ function NavLinks({ className, linkClass, onClick }: { className?: string; linkC
   return (
     <nav className={className}>
       <NavLink to="/" end className={linkClass} onClick={onClick}>
+        Chat
+      </NavLink>
+      <NavLink to="/search" className={linkClass} onClick={onClick}>
         Search
       </NavLink>
       <NavLink to="/shortlist" className={linkClass} onClick={onClick}>
         My referrals
+      </NavLink>
+      <NavLink to="/cost" className={linkClass} onClick={onClick}>
+        Cost
       </NavLink>
     </nav>
   );
@@ -83,8 +91,10 @@ const router = createBrowserRouter([
   {
     element: <Layout />,
     children: [
-      { path: '/', element: <ReferralSearchPage /> },
+      { path: '/', element: <ChatPage /> },
+      { path: '/search', element: <ReferralSearchPage /> },
       { path: '/shortlist', element: <ShortlistPage /> },
+      { path: '/cost', element: <CostPage /> },
     ],
   },
 ]);

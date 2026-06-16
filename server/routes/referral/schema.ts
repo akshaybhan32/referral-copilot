@@ -84,6 +84,33 @@ CREATE TABLE IF NOT EXISTS referral.shortlist_item (
   status text DEFAULT 'candidate', added_at timestamptz DEFAULT now(),
   PRIMARY KEY (shortlist_id, facility_id));
 
+-- Multi-turn agent conversations. Ephemeral working set: held here during the
+-- conversation, archived to a UC Delta table and purged on close.
+CREATE TABLE IF NOT EXISTS referral.conversation (
+  conversation_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text,
+  started_at timestamptz DEFAULT now(),
+  last_activity_at timestamptz DEFAULT now(),
+  status text DEFAULT 'active',
+  lang text);
+CREATE TABLE IF NOT EXISTS referral.conversation_turn (
+  conversation_id uuid REFERENCES referral.conversation(conversation_id) ON DELETE CASCADE,
+  turn_no int,
+  role text,
+  content text,
+  parsed_need text, parsed_place text,
+  lat double precision, lng double precision,
+  result_count int,
+  results_json jsonb,
+  created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (conversation_id, turn_no));
+
+-- Model Serving token usage, for the cost dashboard (real tokens per call).
+CREATE TABLE IF NOT EXISTS referral.usage_event (
+  id bigserial PRIMARY KEY, kind text NOT NULL, endpoint text, tokens bigint DEFAULT 0,
+  created_at timestamptz DEFAULT now());
+CREATE INDEX IF NOT EXISTS ix_usage_kind ON referral.usage_event (kind, created_at);
+
 CREATE INDEX IF NOT EXISTS ix_facility_lat ON referral.facility (lat);
 CREATE INDEX IF NOT EXISTS ix_facility_lng ON referral.facility (lng);
 CREATE INDEX IF NOT EXISTS ix_facility_type ON referral.facility (facility_type);

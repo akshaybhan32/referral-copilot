@@ -1,20 +1,18 @@
 import { z } from 'zod';
-import { Application, Request } from 'express';
 import { setupReferralSchema } from './schema';
+import {
+  type AppKitWithLakebase,
+  parseIntent,
+  localize,
+  semanticSearch,
+  resolveOrigin,
+  isEmergency,
+  SPEECH_LOCALE,
+} from './search-core';
+import { userId } from './user';
 
-// AppKit's serving invoke() is typed as returning the unwrapped response, but at
-// runtime it returns an ExecutionResult ({ ok, data }). We type serving loosely
-// (Promise<unknown>, method syntax) so the real appkit is structurally assignable
-// without a cast, and narrow each result to ExecResult at the call site.
-type ExecResult = { ok: true; data: unknown } | { ok: false; status: number; message: string };
+export type { AppKitWithLakebase };
 
-export interface AppKitWithLakebase {
-  lakebase: { query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
-  serving(alias: string): { invoke(body: Record<string, unknown>): Promise<unknown> };
-  server: { extend(fn: (app: Application) => void): void };
-}
-
-const userOf = (req: Request) => req.header('x-forwarded-email') ?? 'local-dev';
 
 const SearchQuery = z.object({
   need: z.string().min(1),
@@ -25,157 +23,6 @@ const SearchQuery = z.object({
   operator: z.string().optional(),
   limit: z.coerce.number().min(1).max(50).default(20),
 });
-
-interface SearchParams {
-  need: string;
-  lat: number;
-  lng: number;
-  radius: number;
-  type?: string;
-  operator?: string;
-  limit: number;
-}
-
-// Embed query text with databricks-gte-large-en -> a pgvector literal '[..]'.
-async function embedQuery(appkit: AppKitWithLakebase, text: string): Promise<string> {
-  const r = (await appkit.serving('embed').invoke({ input: text })) as ExecResult;
-  if (!r.ok) throw new Error(`embed failed: ${r.message}`);
-  const data = r.data as { data?: Array<{ embedding?: number[] }> };
-  const emb = data.data?.[0]?.embedding;
-  if (!emb || emb.length === 0) throw new Error('embed returned no vector');
-  return `[${emb.join(',')}]`;
-}
-
-type ChatMsg = { role: 'system' | 'user'; content: string };
-
-// One chat-LLM call -> trimmed text content.
-async function chat(appkit: AppKitWithLakebase, messages: ChatMsg[], maxTokens = 200): Promise<string> {
-  const r = (await appkit.serving('llm').invoke({ messages, temperature: 0, max_tokens: maxTokens })) as ExecResult;
-  if (!r.ok) throw new Error(`llm failed: ${r.message}`);
-  const data = r.data as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content?.trim() ?? '';
-}
-
-// Pull the first {...} object out of an LLM response (tolerates ```json fences / prose).
-function extractJson<T>(s: string): T {
-  const m = s.match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('no JSON in LLM output');
-  return JSON.parse(m[0]) as T;
-}
-
-const SYS_PARSE = `You convert a patient's health-facility search query (in ANY language) into JSON.
-Output ONLY compact JSON: {"need":"<care need in English>","place":"<city/place name in English>","lang":"<ISO 639-1 code of the input language>"}.
-Translate and transliterate place names to their common English spelling. If no place is mentioned, use "" for place. No prose, no markdown.`;
-
-// Translate-in + intent extraction. English "<need> near <place>" skips the LLM.
-async function parseIntent(
-  appkit: AppKitWithLakebase,
-  q: string,
-): Promise<{ need: string; place: string; lang: string }> {
-  const ascii = [...q].every((c) => c.charCodeAt(0) < 128);
-  const m = q.match(/^\s*(.+?)\s+near\s+(.+?)\s*$/i);
-  if (ascii && m) return { need: m[1].trim(), place: m[2].trim(), lang: 'en' };
-  const content = await chat(appkit, [
-    { role: 'system', content: SYS_PARSE },
-    { role: 'user', content: q },
-  ], 120);
-  const j = extractJson<{ need?: string; place?: string; lang?: string }>(content);
-  return {
-    need: String(j.need ?? '').trim(),
-    place: String(j.place ?? '').trim(),
-    lang: (String(j.lang ?? 'en').trim() || 'en').toLowerCase().slice(0, 2),
-  };
-}
-
-const SYS_LOCALIZE = `Translate the string values of the given JSON into the language given as "target=<ISO code>".
-Keep proper nouns (hospital names, place names) and all numbers unchanged. Output ONLY the same JSON shape, nothing else.`;
-
-// Localize-out: translate the summary + per-card evidence in one call. Best-effort
-// (falls back to English on any failure). Facility names/phones/URLs are never sent here.
-async function localize(
-  appkit: AppKitWithLakebase,
-  summary: string,
-  reasons: string[],
-  lang: string,
-): Promise<{ summary: string; reasons: string[] }> {
-  if (lang === 'en' || (!summary && reasons.length === 0)) return { summary, reasons };
-  try {
-    const content = await chat(
-      appkit,
-      [
-        { role: 'system', content: SYS_LOCALIZE },
-        { role: 'user', content: `target=${lang}  ${JSON.stringify({ summary, reasons })}` },
-      ],
-      300 + reasons.length * 80, // Devanagari is token-heavy; budget per reason so JSON isn't truncated
-    );
-    const j = extractJson<{ summary?: string; reasons?: unknown[] }>(content);
-    const tr = Array.isArray(j.reasons) ? j.reasons : [];
-    // Index-wise with per-item fallback (don't lose everything if one is missing/truncated).
-    return {
-      summary: typeof j.summary === 'string' && j.summary ? j.summary : summary,
-      reasons: reasons.map((en, i) => (typeof tr[i] === 'string' && tr[i] ? String(tr[i]) : en)),
-    };
-  } catch {
-    return { summary, reasons };
-  }
-}
-
-// ISO 639-1 -> BCP-47 hint the client can hand to speech synthesis.
-const SPEECH_LOCALE: Record<string, string> = {
-  hi: 'hi-IN', bn: 'bn-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN',
-  gu: 'gu-IN', kn: 'kn-IN', ml: 'ml-IN', pa: 'pa-IN', ur: 'ur-IN', en: 'en-IN',
-};
-
-// One semantic search: geo radius + cosine similarity (search_facilities_vec),
-// then attach query-RELEVANT evidence (procedures/capabilities/specialties most
-// similar to the care need via pg_trgm) so each card cites why it matched.
-async function semanticSearch(appkit: AppKitWithLakebase, p: SearchParams) {
-  const vec = await embedQuery(appkit, p.need);
-  const { rows } = await appkit.lakebase.query(
-    'SELECT * FROM referral.search_facilities_vec($1::vector,$2,$3,$4,$5,$6,$7)',
-    [vec, p.lat, p.lng, p.radius, p.type ?? null, p.operator ?? null, p.limit],
-  );
-  if (rows.length === 0) return rows;
-
-  const ids = rows.map((r) => r.facility_id as string);
-  const ev = await appkit.lakebase.query(
-    `SELECT facility_id, string_agg(txt, ' • ' ORDER BY s DESC) AS reason FROM (
-       SELECT facility_id, txt, s,
-              row_number() OVER (PARTITION BY facility_id ORDER BY s DESC) rn FROM (
-         SELECT facility_id, procedure  AS txt, similarity(procedure,  $1) s FROM referral.facility_procedure  WHERE facility_id = ANY($2)
-         UNION ALL
-         SELECT facility_id, capability AS txt, similarity(capability, $1) s FROM referral.facility_capability WHERE facility_id = ANY($2)
-         UNION ALL
-         SELECT facility_id, specialty  AS txt, similarity(specialty,  $1) s FROM referral.facility_specialty  WHERE facility_id = ANY($2)
-       ) u WHERE s > 0.12
-     ) r WHERE rn <= 3 GROUP BY facility_id`,
-    [p.need, ids],
-  );
-  const reasonOf = new Map(ev.rows.map((r) => [r.facility_id as string, r.reason as string]));
-  // Prefer query-relevant evidence; fall back to the function's generic reason.
-  return rows.map((r) => ({ ...r, match_reason: reasonOf.get(r.facility_id as string) ?? r.match_reason }));
-}
-
-// Geocode a place name from our own data: average the coords of facilities in
-// that city (robust — resolves exactly when we have facilities to recommend),
-// falling back to the PIN district centroid.
-async function geocode(appkit: AppKitWithLakebase, place: string) {
-  const c = await appkit.lakebase.query(
-    `SELECT avg(lat) lat, avg(lng) lng, count(*) n
-       FROM referral.facility WHERE lower(city)=lower($1) AND lat IS NOT NULL`,
-    [place],
-  );
-  if (Number(c.rows[0]?.n ?? 0) > 0) {
-    return { lat: Number(c.rows[0].lat), lng: Number(c.rows[0].lng) };
-  }
-  const d = await appkit.lakebase.query(
-    `SELECT centroid_lat lat, centroid_lng lng FROM referral.pin_geo
-      WHERE lower(primary_district)=lower($1) AND centroid_lat IS NOT NULL LIMIT 1`,
-    [place],
-  );
-  if (d.rows.length) return { lat: Number(d.rows[0].lat), lng: Number(d.rows[0].lng) };
-  return null;
-}
 
 export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<void> {
   await setupReferralSchema(appkit);
@@ -197,7 +44,7 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
             `INSERT INTO referral.search_session
                (user_id, raw_query, parsed_care_need, parsed_lat, parsed_lng, radius_km, result_count)
              VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-            [userOf(req), `${need} near (${lat},${lng})`, need, lat, lng, radius, rows.length],
+            [userId(req), `${need} near (${lat},${lng})`, need, lat, lng, radius, rows.length],
           )
           .catch(() => undefined);
         res.json({ count: rows.length, results: rows });
@@ -218,36 +65,39 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
           type: z.string().optional(),
           operator: z.string().optional(),
           limit: z.coerce.number().min(1).max(50).default(20),
+          lat: z.coerce.number().min(-90).max(90).optional(),
+          lng: z.coerce.number().min(-180).max(180).optional(),
         })
         .safeParse(req.query);
       if (!parsed.success) {
         res.status(400).json({ error: 'q required' });
         return;
       }
-      const { q, radius, type, operator, limit } = parsed.data;
+      const { q, radius, type, operator, limit, lat: devLat, lng: devLng } = parsed.data;
+      const hasDevice = devLat != null && devLng != null;
       try {
         // 1. Translate-in + intent extraction (any language -> English need/place).
         const { need, place, lang } = await parseIntent(appkit, q);
         const speechLocale = SPEECH_LOCALE[lang] ?? `${lang}-IN`;
-        if (!need || !place) {
+        if (!need || (!place && !hasDevice)) {
           res.status(400).json({
             error: "Tell me a care need and a place, e.g. 'dialysis near Patna' / 'पटना के पास डायलिसिस'.",
             need, place, lang,
           });
           return;
         }
-        // 2. Geocode (English place) + semantic search (existing English pipeline).
-        const loc = await geocode(appkit, place);
-        if (!loc) {
-          res.status(404).json({ error: `Couldn't find "${place}". Try a nearby city.`, need, place, lang });
+        // 2. Resolve the most precise origin (device GPS > PIN > city), then search.
+        const origin = await resolveOrigin(appkit, { message: q, place, deviceLat: devLat, deviceLng: devLng });
+        if (!origin) {
+          res.status(404).json({ error: `Couldn't find "${place}". Try a nearby city or a PIN code.`, need, place, lang });
           return;
         }
-        const rows = await semanticSearch(appkit, { need, lat: loc.lat, lng: loc.lng, radius, type, operator, limit });
+        const rows = await semanticSearch(appkit, { need, lat: origin.lat, lng: origin.lng, radius, type, operator, limit });
 
         // 3. Localize-out: translate the summary + per-card evidence into the input language.
         const summaryEn = rows.length
-          ? `${rows.length} ${rows.length === 1 ? 'facility' : 'facilities'} found for ${need} near ${place}.`
-          : `No facilities found for ${need} near ${place}.`;
+          ? `${rows.length} ${rows.length === 1 ? 'facility' : 'facilities'} found for ${need} near ${origin.label}.`
+          : `No facilities found for ${need} near ${origin.label}.`;
         const reasonsEn = rows.map((r) => (typeof r.match_reason === 'string' ? r.match_reason : ''));
         const localized = await localize(appkit, summaryEn, reasonsEn, lang);
         const results = rows.map((r, i) => ({
@@ -261,15 +111,16 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
             `INSERT INTO referral.search_session
                (user_id, raw_query, parsed_care_need, parsed_location, parsed_lat, parsed_lng, radius_km, result_count)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-            [userOf(req), q, need, place, loc.lat, loc.lng, radius, rows.length],
+            [userId(req), q, need, origin.label, origin.lat, origin.lng, radius, rows.length],
           )
           .catch(() => undefined);
 
         res.json({
-          need, place, lang, speechLocale,
-          interpretation: `${need} near ${place}`,
+          need, place: origin.label, lang, speechLocale, emergency: isEmergency(q),
+          interpretation: `${need} near ${origin.label}`,
+          origin: { label: origin.label, precision: origin.precision },
           summary: localized.summary,
-          lat: loc.lat, lng: loc.lng,
+          lat: origin.lat, lng: origin.lng,
           count: results.length, results,
         });
       } catch (err) {
@@ -315,7 +166,7 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
       try {
         const { rows } = await appkit.lakebase.query(
           'INSERT INTO referral.shortlist (user_id, title) VALUES ($1,$2) RETURNING *',
-          [userOf(req), body.data.title],
+          [userId(req), body.data.title],
         );
         res.status(201).json(rows[0]);
       } catch (err) {
@@ -328,7 +179,7 @@ export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<v
       try {
         const { rows } = await appkit.lakebase.query(
           'SELECT * FROM referral.shortlist WHERE user_id=$1 ORDER BY created_at DESC',
-          [userOf(req)],
+          [userId(req)],
         );
         res.json(rows);
       } catch (err) {
