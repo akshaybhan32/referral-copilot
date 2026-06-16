@@ -207,14 +207,14 @@ export function ChatPage() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto flex flex-col h-[calc(100vh-9rem)]">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Referral assistant</h2>
-          <p className="text-muted-foreground text-sm">Multi-turn — ask follow-ups like “what about Jaipur?”. Saved to the lakehouse when you finish.</p>
+    <div className="max-w-3xl w-full mx-auto flex flex-col flex-1 min-h-0">
+      <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
+        <div className="min-w-0">
+          <h2 className="text-xl sm:text-2xl font-bold text-foreground">Referral assistant</h2>
+          <p className="text-muted-foreground text-sm hidden sm:block">Multi-turn — ask follow-ups like “what about Jaipur?”. Saved to the lakehouse when you finish.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void newChat()}>
-          <RotateCcw className="h-3.5 w-3.5 mr-1" /> End & new
+        <Button variant="outline" size="sm" onClick={() => void newChat()} className="shrink-0">
+          <RotateCcw className="h-3.5 w-3.5 mr-1" /> <span className="hidden sm:inline">End &amp; </span>New
         </Button>
       </div>
 
@@ -338,8 +338,9 @@ export function ChatPage() {
 
       <form
         onSubmit={(e) => { e.preventDefault(); void send(input); }}
-        className="mt-3 flex items-end gap-2 border-t pt-3"
+        className="mt-3 border-t pt-3 space-y-2"
       >
+        <div className="flex flex-wrap items-center gap-2">
         <select
           value={operator}
           onChange={(e) => setOperator(e.target.value as '' | 'public' | 'private')}
@@ -372,6 +373,8 @@ export function ChatPage() {
             <option key={l.code} value={l.code}>{l.label}</option>
           ))}
         </select>
+        </div>
+        <div className="flex items-end gap-2">
         <div className="relative flex-1">
           <Input
             value={input}
@@ -396,6 +399,7 @@ export function ChatPage() {
         <Button type="submit" disabled={loading || !input.trim()}>
           <Send className="h-4 w-4" />
         </Button>
+        </div>
       </form>
       <p className="text-[11px] text-muted-foreground text-center mt-2">
         Informational only — not medical advice. Listings aren’t verified for availability or quality. In an emergency, call <a href="tel:112" className="underline">112</a>.

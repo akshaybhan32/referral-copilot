@@ -1,5 +1,5 @@
 {
-  "name": "referral-copilot",
+  "name": "jevan-rekha-lifeline",
   "version": "1.0.0",
   "main": "dist/server.js",
   "type": "module",
@@ -30,7 +30,7 @@
   "keywords": [],
   "author": "",
   "license": "Unlicensed",
-  "description": "Referral Copilot: care-need + location -> evidence-attached facility shortlist",
+  "description": "Jevan Rekha - Lifeline: multilingual AI hospital referral agent for India",
   "dependencies": {
     "@databricks/appkit": "0.38.1",
     "@databricks/appkit-ui": "0.38.1",

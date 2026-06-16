@@ -17,8 +17,8 @@ import { CostPage } from './pages/CostPage';
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
     isActive
-      ? 'bg-primary text-primary-foreground'
-      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      ? 'bg-white/20 text-white'
+      : 'text-white/80 hover:bg-white/15 hover:text-white'
   }`;
 
 const mobileNavLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -60,13 +60,13 @@ function Layout() {
   }, [isMobile]);
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <header className="border-b px-4 md:px-6 py-3 flex items-center gap-4">
-        <h1 className="text-lg font-semibold text-foreground">Referral Copilot</h1>
+    <div className="h-screen h-dvh bg-background flex flex-col overflow-hidden">
+      <header className="bg-primary border-b border-primary px-4 md:px-6 py-3 flex items-center gap-4 shrink-0">
+        <h1 className="text-lg font-semibold text-primary-foreground">Jevan Rekha — Lifeline</h1>
         <NavLinks className="hidden md:flex gap-1" linkClass={navLinkClass} />
         <div className="ml-auto md:hidden">
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-            <Button variant="ghost" size="icon" onClick={() => setMobileNavOpen(true)}>
+            <Button variant="ghost" size="icon" className="text-white hover:bg-white/15 hover:text-white" onClick={() => setMobileNavOpen(true)}>
               <Menu className="h-5 w-5" />
               <span className="sr-only">Open navigation</span>
             </Button>
@@ -80,7 +80,7 @@ function Layout() {
         </div>
       </header>
 
-      <main className="flex-1 p-4 md:p-6">
+      <main className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
         <Outlet />
       </main>
     </div>
