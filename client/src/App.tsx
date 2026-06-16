@@ -11,7 +11,6 @@ import {
 import { Menu } from 'lucide-react';
 import { ChatPage } from './pages/ChatPage';
 import { ReferralSearchPage } from './pages/ReferralSearchPage';
-import { ShortlistPage } from './pages/ShortlistPage';
 import { CostPage } from './pages/CostPage';
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -38,9 +37,6 @@ function NavLinks({ className, linkClass, onClick }: { className?: string; linkC
       </NavLink>
       <NavLink to="/search" className={linkClass} onClick={onClick}>
         Search
-      </NavLink>
-      <NavLink to="/shortlist" className={linkClass} onClick={onClick}>
-        My referrals
       </NavLink>
       <NavLink to="/cost" className={linkClass} onClick={onClick}>
         Cost
@@ -93,7 +89,6 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <ChatPage /> },
       { path: '/search', element: <ReferralSearchPage /> },
-      { path: '/shortlist', element: <ShortlistPage /> },
       { path: '/cost', element: <CostPage /> },
     ],
   },

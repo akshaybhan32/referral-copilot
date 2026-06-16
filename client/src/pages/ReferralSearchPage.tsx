@@ -9,7 +9,7 @@ import {
 } from '@databricks/appkit-ui/react';
 import { useState } from 'react';
 import {
-  Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Plus, Check, Sparkles, Mic, Volume2,
+  Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Sparkles, Mic, Volume2,
 } from 'lucide-react';
 import { listenOnce, speak, sttSupported, ttsSupported } from '../lib/speech';
 
@@ -67,7 +67,6 @@ export function ReferralSearchPage() {
   const [parsed, setParsed] = useState<Parsed | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [added, setAdded] = useState<Record<string, boolean>>({});
 
   const search = async (q: string) => {
     if (!q.trim()) return;
@@ -111,36 +110,6 @@ export function ReferralSearchPage() {
       setError(err instanceof Error ? `Mic error: ${err.message}` : 'Mic error');
     } finally {
       setListening(false);
-    }
-  };
-
-  const addToShortlist = async (r: Result, rank: number) => {
-    try {
-      // lazy-create one shortlist per browser session
-      let id = sessionStorage.getItem('shortlist_id');
-      if (!id) {
-        const created = (await fetch('/api/referral/shortlists', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: 'My referrals' }),
-        }).then((x) => x.json())) as { shortlist_id: string };
-        id = created.shortlist_id;
-        sessionStorage.setItem('shortlist_id', id);
-      }
-      await fetch(`/api/referral/shortlists/${id}/items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          facility_id: r.facility_id,
-          rank,
-          distance_km: r.distance_km,
-          score: r.score,
-          match_reason: r.match_reason,
-        }),
-      });
-      setAdded((p) => ({ ...p, [r.facility_id]: true }));
-    } catch {
-      /* best-effort */
     }
   };
 
@@ -268,20 +237,10 @@ export function ReferralSearchPage() {
           {results.map((r, i) => (
             <Card key={r.facility_id} className="shadow-sm">
               <CardHeader className="pb-2">
-                <div className="flex items-start justify-between gap-3">
-                  <CardTitle className="text-base leading-tight">
-                    <span className="text-muted-foreground mr-2">#{i + 1}</span>
-                    {r.name}
-                  </CardTitle>
-                  <Button
-                    variant={added[r.facility_id] ? 'secondary' : 'outline'}
-                    size="sm"
-                    onClick={() => void addToShortlist(r, i + 1)}
-                    disabled={added[r.facility_id]}
-                  >
-                    {added[r.facility_id] ? <><Check className="h-3.5 w-3.5 mr-1" />Added</> : <><Plus className="h-3.5 w-3.5 mr-1" />Shortlist</>}
-                  </Button>
-                </div>
+                <CardTitle className="text-base leading-tight">
+                  <span className="text-muted-foreground mr-2">#{i + 1}</span>
+                  {r.name}
+                </CardTitle>
                 <div className="flex flex-wrap gap-2 text-xs pt-1">
                   {r.facility_type && <Badge>{r.facility_type}</Badge>}
                   {r.operator_type && <Badge tone={r.operator_type === 'public' || r.operator_type === 'government' ? 'success' : 'muted'}>{r.operator_type}</Badge>}
