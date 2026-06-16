@@ -80,7 +80,7 @@ function Layout() {
         </div>
       </header>
 
-      <main className="flex-1 min-h-0 p-4 md:p-6 flex flex-col">
+      <main className="flex-1 min-h-0 p-4 md:p-6 flex flex-col overflow-y-auto">
         <Outlet />
       </main>
     </div>
