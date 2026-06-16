@@ -249,13 +249,31 @@ export async function semanticSearch(
     }
   }
 
+  // 3) Registry verification (PMJAY/HFR/NABH) — best-effort; the table is optional.
+  let verOf = new Map<string, string>();
+  try {
+    const ver = await appkit.lakebase.query(
+      `SELECT facility_id, source FROM referral.facility_verification WHERE facility_id = ANY($1) AND verified`,
+      [ids],
+    );
+    verOf = new Map(ver.rows.map((r) => [r.facility_id as string, String(r.source)]));
+  } catch {
+    /* facility_verification not present yet — skip badges */
+  }
+
   return rows.map((r) => {
     const id = r.facility_id as string;
     const lex = reasonOf.get(id);
     const g = grounded.get(id);
     const reason = lex ?? g?.reason ?? (typeof r.match_reason === 'string' ? r.match_reason : '');
     const confidence = lex || (g && !g.weak) ? 'listed' : 'weak';
-    return { ...r, match_reason: reason, evidence_confidence: confidence };
+    return {
+      ...r,
+      match_reason: reason,
+      evidence_confidence: confidence,
+      verified: verOf.has(id),
+      verified_source: verOf.get(id) ?? null,
+    };
   });
 }
 

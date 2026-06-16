@@ -111,6 +111,13 @@ CREATE TABLE IF NOT EXISTS referral.usage_event (
   created_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS ix_usage_kind ON referral.usage_event (kind, created_at);
 
+-- Registry verification (PMJAY/HFR/NABH); populated by etl/verify_facilities.py.
+CREATE TABLE IF NOT EXISTS referral.facility_verification (
+  facility_id text PRIMARY KEY,
+  source text, registry_name text, registry_type text,
+  verified boolean DEFAULT true, accredited boolean,
+  verified_services text[], match_score numeric, verified_at timestamptz DEFAULT now());
+
 CREATE INDEX IF NOT EXISTS ix_facility_lat ON referral.facility (lat);
 CREATE INDEX IF NOT EXISTS ix_facility_lng ON referral.facility (lng);
 CREATE INDEX IF NOT EXISTS ix_facility_type ON referral.facility (facility_type);

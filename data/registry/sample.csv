@@ -1,0 +1,9 @@
+source,registry_name,city,state,pincode,facility_type,services,accredited
+PMJAY,Indira Gandhi Institute of Medical Sciences,Patna,Bihar,800014,Public,dialysis;nephrology;cardiology,false
+PMJAY,Patna Medical College and Hospital,Patna,Bihar,800004,Public,dialysis;general surgery;trauma,false
+PMJAY,All India Institute of Medical Sciences Patna,Patna,Bihar,801507,Public,dialysis;cardiology;oncology,true
+PMJAY,Nalanda Medical College and Hospital,Patna,Bihar,800007,Public,dialysis;general medicine,false
+NABH,Paras HMRI Hospital,Patna,Bihar,800014,Private,cardiology;nephrology;neurology,true
+PMJAY,Sankara Eye Hospital,Jaipur,Rajasthan,302039,Private,cataract surgery;ophthalmology,true
+PMJAY,All India Institute of Medical Sciences,New Delhi,Delhi,110029,Public,cardiac surgery;dialysis;oncology;neurosurgery,true
+PMJAY,Safdarjung Hospital,New Delhi,Delhi,110029,Public,cardiac surgery;general surgery;dialysis,false

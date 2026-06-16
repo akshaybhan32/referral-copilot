@@ -1,6 +1,6 @@
 import { Card, CardContent, Button, Input } from '@databricks/appkit-ui/react';
 import { useEffect, useRef, useState } from 'react';
-import { Phone, ExternalLink, MapPin, Mic, Volume2, Send, RotateCcw, Sparkles, LocateFixed, Navigation, MessageCircle } from 'lucide-react';
+import { Phone, ExternalLink, MapPin, Mic, Volume2, Send, RotateCcw, Sparkles, LocateFixed, Navigation, MessageCircle, BadgeCheck } from 'lucide-react';
 import { listenOnce, speak, sttSupported, ttsSupported } from '../lib/speech';
 import { FacilityMap } from '../components/FacilityMap';
 
@@ -27,6 +27,8 @@ interface Result {
   similarity: number;
   match_reason: string;
   evidence_confidence?: 'listed' | 'weak';
+  verified?: boolean;
+  verified_source?: string | null;
   official_phone: string | null;
   official_website: string | null;
   city: string | null;
@@ -279,6 +281,11 @@ export function ChatPage() {
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="font-medium text-sm">
                             <span className="text-muted-foreground mr-1.5">#{idx + 1}</span>{r.name}
+                            {r.verified && (
+                              <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-green-500/15 text-green-700 px-1.5 py-0.5 text-[10px] font-semibold align-middle">
+                                <BadgeCheck className="h-3 w-3" />{r.verified_source}
+                              </span>
+                            )}
                           </span>
                           <span className="text-xs text-muted-foreground inline-flex items-center gap-1 shrink-0">
                             <MapPin className="h-3 w-3" />{r.distance_km} km
