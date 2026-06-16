@@ -89,8 +89,19 @@ INDIA = "latitude between 6.0 and 37.6 and longitude between 68.0 and 97.6"
 def SAN(c):
     return f"translate(coalesce({c},''), concat(chr(10),chr(13),chr(9)), '   ')"
 
+# Valid facility-type vocabulary. Some upstream bronze rows are column-shifted
+# (a description's commas/newlines split the source CSV before it reached bronze),
+# leaking prose / coordinates / JSON / hash ids into facilityTypeId. We (a) normalize
+# the 'null' string + the 'farmacy' typo, and (b) DROP rows whose type isn't a known
+# category, which is a reliable tell that the whole row is misaligned garbage.
+TYPE_VOCAB = "('hospital','clinic','dentist','doctor','pharmacy','farmacy','nursing_home')"
+TYPE_NORM = (
+    "CASE WHEN lower(trim(facilityTypeId)) IN ('null','') THEN NULL "
+    "WHEN lower(trim(facilityTypeId)) = 'farmacy' THEN 'pharmacy' "
+    "ELSE lower(trim(facilityTypeId)) END")
+
 FACILITY = f"""
-SELECT unique_id, {SAN('name')}, facilityTypeId, lower(operatorTypeId),
+SELECT unique_id, {SAN('name')}, {TYPE_NORM}, lower(operatorTypeId),
   try_cast(yearEstablished as int), try_cast(capacity as int), try_cast(numberDoctors as int),
   {SAN('address_city')}, initcap(trim(address_stateOrRegion)),
   CASE WHEN regexp_replace(coalesce(address_zipOrPostcode,''),'\\\\s','') rlike '^[0-9]{{6}}$'
@@ -99,7 +110,12 @@ SELECT unique_id, {SAN('name')}, facilityTypeId, lower(operatorTypeId),
   CASE WHEN {INDIA} THEN longitude END,
   CASE WHEN {INDIA} THEN 'exact_spatial' ELSE 'unresolved' END,
   officialPhone, officialWebsite, email, {SAN('description')}, try_cast(recency_of_page_update as date)
-FROM {B}.bronze_facilities WHERE unique_id IS NOT NULL AND name IS NOT NULL
+FROM {B}.bronze_facilities
+WHERE unique_id IS NOT NULL AND name IS NOT NULL
+  -- drop column-shifted garbage: type must be empty/null or a known category
+  AND (facilityTypeId IS NULL
+       OR lower(trim(facilityTypeId)) IN ('null','')
+       OR lower(trim(facilityTypeId)) IN {TYPE_VOCAB})
 QUALIFY row_number() OVER (PARTITION BY unique_id ORDER BY recency_of_page_update DESC NULLS LAST) = 1"""
 
 def explode_q(col):
