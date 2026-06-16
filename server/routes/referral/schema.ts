@@ -128,11 +128,43 @@ CREATE INDEX IF NOT EXISTS ix_shortlist_user ON referral.shortlist (user_id);
 CREATE INDEX IF NOT EXISTS ix_session_user ON referral.search_session (user_id);
 `;
 
+// Table/column descriptions — surface in the Lakebase UI "Description" column.
+// Run as the SP (deploy-first owner) so it can comment the tables it owns; any
+// statement on a table the SP does not own raises "must be owner" and is skipped.
+// Keep text free of single quotes so these single-quoted SQL literals stay simple.
+const COMMENTS = [
+  `COMMENT ON TABLE referral.facility IS 'Master facility record — one row per health facility (~10k). What every search returns.'`,
+  `COMMENT ON COLUMN referral.facility.facility_type IS 'Normalized category: hospital/clinic/dentist/doctor/pharmacy/nursing_home, or NULL if unknown.'`,
+  `COMMENT ON COLUMN referral.facility.operator_type IS 'Ownership: public / private / government.'`,
+  `COMMENT ON COLUMN referral.facility.geo_confidence IS 'How coordinates were resolved: exact_spatial | unresolved.'`,
+  `COMMENT ON TABLE referral.facility_capability IS 'Clinical capabilities per facility (e.g. dialysis unit, cath lab). Feeds embeddings + pg_trgm evidence.'`,
+  `COMMENT ON TABLE referral.facility_procedure IS 'Procedures offered per facility (e.g. CABG, cataract surgery). Feeds embeddings + pg_trgm evidence.'`,
+  `COMMENT ON TABLE referral.facility_specialty IS 'Medical specialties per facility (cardiology, nephrology, ...). Feeds embeddings + pg_trgm evidence.'`,
+  `COMMENT ON TABLE referral.facility_phone IS 'All known phone numbers per facility; is_official flags the listed official line.'`,
+  `COMMENT ON TABLE referral.facility_source_url IS 'Provenance: the source URL(s) each facility fact was scraped from.'`,
+  `COMMENT ON TABLE referral.pin_geo IS 'PIN to district/state + centroid lookup. Largely DEPRECATED — the app no longer trusts these centroids for geocoding; kept for reference/fallback.'`,
+  `COMMENT ON TABLE referral.search_session IS 'Single-shot (non-chat) search log — used for analytics and the retention sweep.'`,
+  `COMMENT ON TABLE referral.shortlist IS 'Saved facility lists. Backs the former My referrals feature (removed from the UI; tables retained, dormant).'`,
+  `COMMENT ON TABLE referral.shortlist_item IS 'Facilities saved to a shortlist, with rank/distance/score/note. Dormant (UI removed).'`,
+  `COMMENT ON TABLE referral.conversation IS 'One row per chat session (ephemeral working set). Archived to Unity Catalog and purged on close / 30-min idle.'`,
+  `COMMENT ON TABLE referral.conversation_turn IS 'Individual chat messages within a conversation; results_json snapshots the facilities returned per turn.'`,
+  `COMMENT ON TABLE referral.usage_event IS 'Cost dashboard source of truth: one row per Model Serving call logging real token usage.'`,
+  `COMMENT ON TABLE referral.facility_verification IS 'Registry matches that drive the green Verified badge. Populated by verify_facilities.py.'`,
+];
+
 export async function setupReferralSchema(appkit: AppKitLakebase): Promise<void> {
   try {
     // Free space first (idempotent drops), then ensure core tables exist.
     await appkit.lakebase.query(CLEANUP_SQL);
     await appkit.lakebase.query(SCHEMA_SQL);
+    // Apply descriptions per-statement so a non-owned table never aborts the rest.
+    for (const stmt of COMMENTS) {
+      try {
+        await appkit.lakebase.query(stmt);
+      } catch {
+        /* SP does not own this table yet — skip (it may be owned by the ETL user) */
+      }
+    }
     console.log('[referral] schema ready (semantic retrieval via facility_vec)');
   } catch (err) {
     console.warn('[referral] schema setup failed:', (err as Error).message);

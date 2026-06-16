@@ -117,6 +117,30 @@ databricks.yml          Asset Bundle: app + Lakebase + serving_endpoint resource
 app.yaml                Runtime command + env injection (valueFrom resources)
 ```
 
+## Data dictionary (`referral.*` in Lakebase)
+
+These descriptions are also stored as Postgres `COMMENT`s (see [`db/comments.sql`](db/comments.sql)), so they show in the Lakebase UI. Tables owned by the app Service Principal get their comments applied on deploy (`server/routes/referral/schema.ts`).
+
+| Table | Rows | Description |
+|---|--:|---|
+| `facility` | ~10k | Master record — one row per facility. What every search returns. |
+| `facility_capability` | 223k | Clinical capabilities (e.g. "dialysis unit"). Feeds embeddings + evidence. |
+| `facility_procedure` | 156k | Procedures offered (e.g. "CABG"). Feeds embeddings + evidence. |
+| `facility_specialty` | 118k | Medical specialties. Feeds embeddings + evidence. |
+| `facility_phone` | 40k | Phone numbers per facility (`is_official` flag). |
+| `facility_source_url` | 153k | Provenance — source URLs per fact. |
+| `facility_vec` | ~10k | 1024-d `pgvector` embeddings — the semantic search index. |
+| `facility_geo` | 9.9k | Runtime `geo_valid` filter + distance; search joins on this. |
+| `facility_validated` | 9.9k | Silver coordinate-validation audit (offline; syncs into `facility_geo`). |
+| `facility_verification` | 89 | Registry matches (PMJAY/NABH/HFR) → the **Verified** badge. |
+| `registry_stage` | 1.3k | Transient staging for the verification ETL (rebuilt each run). |
+| `pin_geo` | 20k | PIN → district/centroid lookup. **Deprecated** (wrong centroids); reference only. |
+| `conversation` | — | One row per chat session; archived to UC + purged on close/idle. |
+| `conversation_turn` | — | Chat messages; `results_json` snapshots returned facilities. |
+| `search_session` | — | Single-shot search log (analytics + retention sweep). |
+| `shortlist` / `shortlist_item` | — | Saved lists. **Dormant** — backed the removed "My referrals" UI. |
+| `usage_event` | — | One row per Model Serving call (real token usage) — the cost dashboard's source. |
+
 ## Local development
 
 Prereqs: Node 20+, the [Databricks CLI](https://docs.databricks.com/dev-tools/cli/), `psql`, and a workspace profile (`databricks auth login --profile <name>`).
