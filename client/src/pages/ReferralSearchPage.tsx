@@ -9,7 +9,7 @@ import {
 } from '@databricks/appkit-ui/react';
 import { useState } from 'react';
 import {
-  Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Sparkles, Mic, Volume2,
+  Phone, ExternalLink, MapPin, BedDouble, Stethoscope, Sparkles, Mic, Volume2, BadgeCheck,
 } from 'lucide-react';
 import { listenOnce, speak, sttSupported, ttsSupported } from '../lib/speech';
 
@@ -28,6 +28,8 @@ interface Result {
   official_website: string | null;
   city: string | null;
   state: string | null;
+  verified?: boolean;
+  verified_source?: string | null;
 }
 
 interface Parsed {
@@ -240,6 +242,11 @@ export function ReferralSearchPage() {
                 <CardTitle className="text-base leading-tight">
                   <span className="text-muted-foreground mr-2">#{i + 1}</span>
                   {r.name}
+                  {r.verified && (
+                    <span className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-green-500/15 text-green-700 px-1.5 py-0.5 text-[10px] font-semibold align-middle">
+                      <BadgeCheck className="h-3 w-3" />{r.verified_source}
+                    </span>
+                  )}
                 </CardTitle>
                 <div className="flex flex-wrap gap-2 text-xs pt-1">
                   {r.facility_type && <Badge>{r.facility_type}</Badge>}
