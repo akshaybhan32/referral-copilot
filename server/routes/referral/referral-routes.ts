@@ -1,0 +1,297 @@
+import { z } from 'zod';
+import { Application, Request } from 'express';
+import { setupReferralSchema } from './schema';
+
+interface ServingHandle {
+  invoke(body: Record<string, unknown>): Promise<
+    { ok: true; data: unknown } | { ok: false; status: number; message: string }
+  >;
+}
+interface AppKitWithLakebase {
+  lakebase: { query(text: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }> };
+  serving: (alias?: string) => ServingHandle;
+  server: { extend(fn: (app: Application) => void): void };
+}
+
+const userOf = (req: Request) => req.header('x-forwarded-email') ?? 'local-dev';
+
+const SearchQuery = z.object({
+  need: z.string().min(1),
+  lat: z.coerce.number(),
+  lng: z.coerce.number(),
+  radius: z.coerce.number().min(1).max(500).default(50),
+  type: z.string().optional(),
+  operator: z.string().optional(),
+  limit: z.coerce.number().min(1).max(50).default(20),
+});
+
+interface SearchParams {
+  need: string;
+  lat: number;
+  lng: number;
+  radius: number;
+  type?: string;
+  operator?: string;
+  limit: number;
+}
+
+// Embed query text with databricks-gte-large-en -> a pgvector literal '[..]'.
+async function embedQuery(appkit: AppKitWithLakebase, text: string): Promise<string> {
+  const r = await appkit.serving().invoke({ input: text });
+  if (!r.ok) throw new Error(`embed failed: ${r.message}`);
+  const data = r.data as { data?: Array<{ embedding?: number[] }> };
+  const emb = data.data?.[0]?.embedding;
+  if (!emb || emb.length === 0) throw new Error('embed returned no vector');
+  return `[${emb.join(',')}]`;
+}
+
+// One semantic search: geo radius + cosine similarity (search_facilities_vec),
+// then attach query-RELEVANT evidence (procedures/capabilities/specialties most
+// similar to the care need via pg_trgm) so each card cites why it matched.
+async function semanticSearch(appkit: AppKitWithLakebase, p: SearchParams) {
+  const vec = await embedQuery(appkit, p.need);
+  const { rows } = await appkit.lakebase.query(
+    'SELECT * FROM referral.search_facilities_vec($1::vector,$2,$3,$4,$5,$6,$7)',
+    [vec, p.lat, p.lng, p.radius, p.type ?? null, p.operator ?? null, p.limit],
+  );
+  if (rows.length === 0) return rows;
+
+  const ids = rows.map((r) => r.facility_id as string);
+  const ev = await appkit.lakebase.query(
+    `SELECT facility_id, string_agg(txt, ' • ' ORDER BY s DESC) AS reason FROM (
+       SELECT facility_id, txt, s,
+              row_number() OVER (PARTITION BY facility_id ORDER BY s DESC) rn FROM (
+         SELECT facility_id, procedure  AS txt, similarity(procedure,  $1) s FROM referral.facility_procedure  WHERE facility_id = ANY($2)
+         UNION ALL
+         SELECT facility_id, capability AS txt, similarity(capability, $1) s FROM referral.facility_capability WHERE facility_id = ANY($2)
+         UNION ALL
+         SELECT facility_id, specialty  AS txt, similarity(specialty,  $1) s FROM referral.facility_specialty  WHERE facility_id = ANY($2)
+       ) u WHERE s > 0.12
+     ) r WHERE rn <= 3 GROUP BY facility_id`,
+    [p.need, ids],
+  );
+  const reasonOf = new Map(ev.rows.map((r) => [r.facility_id as string, r.reason as string]));
+  // Prefer query-relevant evidence; fall back to the function's generic reason.
+  return rows.map((r) => ({ ...r, match_reason: reasonOf.get(r.facility_id as string) ?? r.match_reason }));
+}
+
+// Geocode a place name from our own data: average the coords of facilities in
+// that city (robust — resolves exactly when we have facilities to recommend),
+// falling back to the PIN district centroid.
+async function geocode(appkit: AppKitWithLakebase, place: string) {
+  const c = await appkit.lakebase.query(
+    `SELECT avg(lat) lat, avg(lng) lng, count(*) n
+       FROM referral.facility WHERE lower(city)=lower($1) AND lat IS NOT NULL`,
+    [place],
+  );
+  if (Number(c.rows[0]?.n ?? 0) > 0) {
+    return { lat: Number(c.rows[0].lat), lng: Number(c.rows[0].lng) };
+  }
+  const d = await appkit.lakebase.query(
+    `SELECT centroid_lat lat, centroid_lng lng FROM referral.pin_geo
+      WHERE lower(primary_district)=lower($1) AND centroid_lat IS NOT NULL LIMIT 1`,
+    [place],
+  );
+  if (d.rows.length) return { lat: Number(d.rows[0].lat), lng: Number(d.rows[0].lng) };
+  return null;
+}
+
+export async function setupReferralRoutes(appkit: AppKitWithLakebase): Promise<void> {
+  await setupReferralSchema(appkit);
+
+  appkit.server.extend((app) => {
+    // --- Core retrieval: care-need + location -> evidence-attached shortlist ---
+    app.get('/api/referral/search', async (req, res) => {
+      const parsed = SearchQuery.safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'need, lat, lng required', detail: parsed.error.flatten() });
+        return;
+      }
+      const { need, lat, lng, radius, type, operator, limit } = parsed.data;
+      try {
+        const rows = await semanticSearch(appkit, { need, lat, lng, radius, type, operator, limit });
+        // best-effort session log (does not block results)
+        appkit.lakebase
+          .query(
+            `INSERT INTO referral.search_session
+               (user_id, raw_query, parsed_care_need, parsed_lat, parsed_lng, radius_km, result_count)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [userOf(req), `${need} near (${lat},${lng})`, need, lat, lng, radius, rows.length],
+          )
+          .catch(() => undefined);
+        res.json({ count: rows.length, results: rows });
+      } catch (err) {
+        console.error('[referral] search failed:', err);
+        res.status(500).json({ error: 'search failed' });
+      }
+    });
+
+    // --- Natural-language entry point: "dialysis near Patna" ---
+    // Splits "<care need> near <place>", geocodes the place from our data, then
+    // runs the same semantic search. This is the box the UI talks to.
+    app.get('/api/referral/ask', async (req, res) => {
+      const parsed = z
+        .object({
+          q: z.string().min(1),
+          radius: z.coerce.number().min(1).max(500).default(50),
+          type: z.string().optional(),
+          operator: z.string().optional(),
+          limit: z.coerce.number().min(1).max(50).default(20),
+        })
+        .safeParse(req.query);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'q required' });
+        return;
+      }
+      const { q, radius, type, operator, limit } = parsed.data;
+      const m = q.match(/^\s*(.+?)\s+near\s+(.+?)\s*$/i);
+      if (!m) {
+        res.status(400).json({ error: "Try '<care need> near <place>', e.g. 'dialysis near Patna'." });
+        return;
+      }
+      const need = m[1].trim();
+      const place = m[2].trim();
+      try {
+        const loc = await geocode(appkit, place);
+        if (!loc) {
+          res.status(404).json({ error: `Couldn't find "${place}". Try a nearby city.`, need, place });
+          return;
+        }
+        const rows = await semanticSearch(appkit, { need, lat: loc.lat, lng: loc.lng, radius, type, operator, limit });
+        appkit.lakebase
+          .query(
+            `INSERT INTO referral.search_session
+               (user_id, raw_query, parsed_care_need, parsed_location, parsed_lat, parsed_lng, radius_km, result_count)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [userOf(req), q, need, place, loc.lat, loc.lng, radius, rows.length],
+          )
+          .catch(() => undefined);
+        res.json({ need, place, lat: loc.lat, lng: loc.lng, count: rows.length, results: rows });
+      } catch (err) {
+        console.error('[referral] ask failed:', err);
+        res.status(500).json({ error: 'search failed' });
+      }
+    });
+
+    // --- Full evidence for one facility (cards "expand") ---
+    app.get('/api/referral/facility/:id', async (req, res) => {
+      const id = req.params.id;
+      try {
+        const [fac, spec, proc, cap, src, phone] = await Promise.all([
+          appkit.lakebase.query('SELECT * FROM referral.facility WHERE facility_id=$1', [id]),
+          appkit.lakebase.query('SELECT specialty FROM referral.facility_specialty WHERE facility_id=$1', [id]),
+          appkit.lakebase.query('SELECT procedure FROM referral.facility_procedure WHERE facility_id=$1', [id]),
+          appkit.lakebase.query('SELECT capability FROM referral.facility_capability WHERE facility_id=$1', [id]),
+          appkit.lakebase.query('SELECT source_url FROM referral.facility_source_url WHERE facility_id=$1', [id]),
+          appkit.lakebase.query('SELECT phone, is_official FROM referral.facility_phone WHERE facility_id=$1', [id]),
+        ]);
+        if (fac.rows.length === 0) {
+          res.status(404).json({ error: 'facility not found' });
+          return;
+        }
+        res.json({
+          ...fac.rows[0],
+          specialties: spec.rows.map((r) => r.specialty),
+          procedures: proc.rows.map((r) => r.procedure),
+          capabilities: cap.rows.map((r) => r.capability),
+          source_urls: src.rows.map((r) => r.source_url),
+          phones: phone.rows,
+        });
+      } catch (err) {
+        console.error('[referral] facility detail failed:', err);
+        res.status(500).json({ error: 'facility detail failed' });
+      }
+    });
+
+    // --- Shortlists (the OLTP write path) ---
+    app.post('/api/referral/shortlists', async (req, res) => {
+      const body = z.object({ title: z.string().min(1) }).safeParse(req.body);
+      if (!body.success) { res.status(400).json({ error: 'title required' }); return; }
+      try {
+        const { rows } = await appkit.lakebase.query(
+          'INSERT INTO referral.shortlist (user_id, title) VALUES ($1,$2) RETURNING *',
+          [userOf(req), body.data.title],
+        );
+        res.status(201).json(rows[0]);
+      } catch (err) {
+        console.error('[referral] create shortlist failed:', err);
+        res.status(500).json({ error: 'create shortlist failed' });
+      }
+    });
+
+    app.get('/api/referral/shortlists', async (req, res) => {
+      try {
+        const { rows } = await appkit.lakebase.query(
+          'SELECT * FROM referral.shortlist WHERE user_id=$1 ORDER BY created_at DESC',
+          [userOf(req)],
+        );
+        res.json(rows);
+      } catch (err) {
+        console.error('[referral] list shortlists failed:', err);
+        res.status(500).json({ error: 'list shortlists failed' });
+      }
+    });
+
+    app.post('/api/referral/shortlists/:id/items', async (req, res) => {
+      const body = z.object({
+        facility_id: z.string().min(1),
+        rank: z.number().optional(),
+        distance_km: z.number().optional(),
+        score: z.number().optional(),
+        match_reason: z.string().optional(),
+      }).safeParse(req.body);
+      if (!body.success) { res.status(400).json({ error: 'facility_id required' }); return; }
+      const b = body.data;
+      try {
+        const { rows } = await appkit.lakebase.query(
+          `INSERT INTO referral.shortlist_item (shortlist_id, facility_id, rank, distance_km, score, match_reason)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (shortlist_id, facility_id) DO UPDATE SET rank=EXCLUDED.rank
+           RETURNING *`,
+          [req.params.id, b.facility_id, b.rank ?? null, b.distance_km ?? null, b.score ?? null, b.match_reason ?? null],
+        );
+        res.status(201).json(rows[0]);
+      } catch (err) {
+        console.error('[referral] add item failed:', err);
+        res.status(500).json({ error: 'add item failed' });
+      }
+    });
+
+    app.get('/api/referral/shortlists/:id/items', async (req, res) => {
+      try {
+        const { rows } = await appkit.lakebase.query(
+          `SELECT i.*, f.name, f.city, f.state, f.official_phone
+             FROM referral.shortlist_item i
+             JOIN referral.facility f ON f.facility_id = i.facility_id
+            WHERE i.shortlist_id=$1 ORDER BY i.rank NULLS LAST, i.added_at`,
+          [req.params.id],
+        );
+        res.json(rows);
+      } catch (err) {
+        console.error('[referral] list items failed:', err);
+        res.status(500).json({ error: 'list items failed' });
+      }
+    });
+
+    app.patch('/api/referral/shortlists/:id/items/:facilityId', async (req, res) => {
+      const body = z.object({
+        status: z.enum(['candidate', 'contacted', 'referred', 'rejected']).optional(),
+        note: z.string().optional(),
+      }).safeParse(req.body);
+      if (!body.success) { res.status(400).json({ error: 'invalid update' }); return; }
+      try {
+        const { rows } = await appkit.lakebase.query(
+          `UPDATE referral.shortlist_item
+              SET status = COALESCE($3, status), note = COALESCE($4, note)
+            WHERE shortlist_id=$1 AND facility_id=$2 RETURNING *`,
+          [req.params.id, req.params.facilityId, body.data.status ?? null, body.data.note ?? null],
+        );
+        if (rows.length === 0) { res.status(404).json({ error: 'item not found' }); return; }
+        res.json(rows[0]);
+      } catch (err) {
+        console.error('[referral] update item failed:', err);
+        res.status(500).json({ error: 'update item failed' });
+      }
+    });
+  });
+}
