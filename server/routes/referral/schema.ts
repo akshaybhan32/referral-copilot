@@ -157,17 +157,19 @@ export async function setupReferralSchema(appkit: AppKitLakebase): Promise<void>
     // Free space first (idempotent drops), then ensure core tables exist.
     await appkit.lakebase.query(CLEANUP_SQL);
     await appkit.lakebase.query(SCHEMA_SQL);
-    // Apply descriptions per-statement so a non-owned table never aborts the rest.
-    for (const stmt of COMMENTS) {
-      try {
-        await appkit.lakebase.query(stmt);
-      } catch {
-        /* SP does not own this table yet — skip (it may be owned by the ETL user) */
-      }
-    }
     console.log('[referral] schema ready (semantic retrieval via facility_vec)');
   } catch (err) {
     console.warn('[referral] schema setup failed:', (err as Error).message);
     console.warn('[referral] deploy the app first so the SP owns the schema (deploy-first)');
+  }
+
+  // Apply table/column descriptions independently of schema setup, per-statement,
+  // so a non-owned table (or a transient schema-setup error) never blocks the rest.
+  for (const stmt of COMMENTS) {
+    try {
+      await appkit.lakebase.query(stmt);
+    } catch {
+      /* SP does not own this table (owned by the ETL user) — skip */
+    }
   }
 }
